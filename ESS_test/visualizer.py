@@ -221,7 +221,7 @@ def get_actual_date_labels(tick_seconds):  # Converts a list of timestamps into 
     
     return datetime_labels
     
-def figure__context_over_participation_time(timestamps, Y, label_names, label_colors, use_actual_dates=False):
+def figure__context_over_participation_time(timestamps, Y, label_names, label_colors, use_actual_dates=True):
     
     n_examples_per_label = np.sum(Y, axis=0)
     
@@ -236,7 +236,7 @@ def figure__context_over_participation_time(timestamps, Y, label_names, label_co
     else:
         limit = 50
     
-    labels_to_display = [label for label, count in sorted_labels_and_counts if count >= limit]
+    labels_to_display = [label for label, count in sorted_labels_and_counts [:9]]
     
     fig = plt.figure(figsize=(10, 7), facecolor='white')
     ax = plt.subplot(1, 1, 1)
@@ -286,7 +286,7 @@ print("The context-labels annotations were self-reported by ther user (and then 
 labels_to_display = ['LYING_DOWN','RUNNING','BICYCLING','SITTING','STANDING','WALKING',
                     'IN_A_CAR','AT_HOME','AT_WORK']
 label_colors = ['g','y','b','c','m','b','r','k','purple']
-figure__context_over_participation_time(timestamps,Y,label_names,labels_to_display,label_colors)
+figure__context_over_participation_time(timestamps,Y,label_names,label_colors)
 
 # See the day of week and time of day
 # figure__context_over_participation_time(timestamps,Y,label_names,labels_to_display,label_colors,use_actual_dates=True)
