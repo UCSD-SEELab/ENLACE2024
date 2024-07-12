@@ -34,7 +34,6 @@ match subject:
         uuid = 'F4665B94-4B4A-4FE0-BA33-FB567BE2E139'
         subject_num = 'subject_5'
 
-
 def parse_header_of_csv(csv_str):  # Takes a string csv_str containing CSV data
     # Isolate the headline columns:
     headline = csv_str[:csv_str.index(b'\n')].decode('utf-8')
@@ -203,6 +202,8 @@ figure__pie_chart(Y,label_names,labels_to_display,'Body state',ax1)
 labels_to_display = ['PHONE_IN_HAND','PHONE_IN_BAG','PHONE_IN_POCKET','PHONE_ON_TABLE']
 ax2 = plt.subplot(1,2,2)
 figure__pie_chart(Y,label_names,labels_to_display,'Phone position',ax2)
+
+plt.tight_layout()
 plt.show()
 
 # --------------- Label combinations that describe specific situations. ---------------
@@ -220,46 +221,59 @@ def get_actual_date_labels(tick_seconds):  # Converts a list of timestamps into 
     
     return datetime_labels
     
-def figure__context_over_participation_time(timestamps,Y,label_names,labels_to_display,label_colors,use_actual_dates=True):
-
-    fig = plt.figure(figsize=(10,7),facecolor='white')
-    ax = plt.subplot(1,1,1)
+def figure__context_over_participation_time(timestamps, Y, label_names, label_colors, use_actual_dates=False):
     
-    seconds_in_day = (60*60*24)
+    n_examples_per_label = np.sum(Y, axis=0)
+    
+    sorted_labels_and_counts = sorted(zip(label_names, n_examples_per_label), reverse=True, key=lambda pair: pair[1])
+    
+    if sum(count >= 50 for _, count in sorted_labels_and_counts) < 3:
+        
+        if sum(count >= 10 for _, count in sorted_labels_and_counts) < 3:
+            limit = 0
+        else:
+            limit = 10
+    else:
+        limit = 50
+    
+    labels_to_display = [label for label, count in sorted_labels_and_counts if count >= limit]
+    
+    fig = plt.figure(figsize=(10, 7), facecolor='white')
+    ax = plt.subplot(1, 1, 1)
+    
+    seconds_in_day = (60 * 60 * 24)
 
     ylabels = []
-    ax.plot(timestamps,len(ylabels)*np.ones(len(timestamps)),'|',color='0.5',label='(Collected data)')
+    ax.plot(timestamps, len(ylabels) * np.ones(len(timestamps)), '|', color='0.5', label='(Collected data)')
     ylabels.append('(Collected data)')
 
-    for (li,label) in enumerate(labels_to_display):
+    for li, label in enumerate(labels_to_display):
         lind = label_names.index(label)
-        is_label_on = Y[:,lind]
+        is_label_on = Y[:, lind]
         label_times = timestamps[is_label_on]
 
-        if len(label_times) > 0:
-            label_str = get_label_pretty_name(label)
-            ax.plot(label_times,len(ylabels)*np.ones(len(label_times)),'|',color=label_colors[li],label=label_str)
-            ylabels.append(label_str)
-        pass
-
-    tick_seconds = range(timestamps[0],timestamps[-1],seconds_in_day)
+        label_str = get_label_pretty_name(label)
+        ax.plot(label_times, len(ylabels) * np.ones(len(label_times)), '|', color=label_colors[li], label=label_str)
+        ylabels.append(label_str)
+    
+    tick_seconds = range(timestamps[0], timestamps[-1], seconds_in_day)
+    
     if use_actual_dates:
         tick_labels = get_actual_date_labels(tick_seconds)
-        plt.xlabel('Time in San Diego',fontsize=14)
-        pass
+        plt.xlabel('Time in San Diego', fontsize=14)
     else:
         tick_labels = (np.array(tick_seconds - timestamps[0]).astype(float) / float(seconds_in_day)).astype(int)
-        plt.xlabel('Days of participation',fontsize=14)
-        pass
+        plt.xlabel('Days of participation', fontsize=14)
     
     ax.set_xticks(tick_seconds)
-    ax.set_xticklabels(tick_labels,fontsize=14)
+    ax.set_xticklabels(tick_labels, fontsize=14)
 
     ax.set_yticks(range(len(ylabels)))
-    ax.set_yticklabels(ylabels,fontsize=14)
+    ax.set_yticklabels(ylabels, fontsize=14)
 
-    ax.set_ylim([-1,len(ylabels)])
-    ax.set_xlim([min(timestamps),max(timestamps)])
+    ax.set_ylim([-1, len(ylabels)])
+    ax.set_xlim([min(timestamps), max(timestamps)])
+    
     plt.show()
     return
 
