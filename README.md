@@ -8,4 +8,3 @@ Our project aims to recognize human activities performed by multiple subjects fo
 
 ## Method
 The process for preparing the IMU raw dataset is described below:
-- 
