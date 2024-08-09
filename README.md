@@ -6,10 +6,6 @@ Hello reader! In this repository, you will find the codes necessary to decompres
 Our project aims to recognize human activities performed by multiple subjects for their subsequent prediction based on Zero-shot reasoning. The future goal is to obtain a system for health monitoring, aging care, and human behavior analysis.
 
 ## Method
-Before processing sensor data, we strongly recommend taking into consideration that the project is missing several folders where data should be stored. So, for the scripts to work, three folders named *"uploaded_data"*, *"unpacked_data"* and *"CSVs"* should be added, each with folders for the subject, which should be named *"subject_(subject number)"* (e.g., x *"subject_1"*). This set of files will be used for data extraction and will be used throughout the project. The subject folders in "uploaded_data" should be filled with the data folder named after the UUID of each subject. For example, the directory should be named:
-
-"C:\Users\John\Desktop\projects\ESS_test\uploaded_data\subject_1\6ec0bd7f-11c0-43da-975e-2a8ad9ebae0b”
-
 The work published in ["Introduction to the ExtraSensory Dataset"](http://extrasensory.ucsd.edu/intro2extrasensory/intro2extrasensory.html#features) was taken as a reference to read the user’s data file, the analysis of the context labels, and the sensor features. 
 The process for preparing the IMU raw dataset is described below:
 -	Dataset collection
@@ -28,9 +24,14 @@ In this part, the features were calculated from the most complete raw measuremen
 Finally, after obtaining the raw IMU data and identifying the activities with the most information collected from each subject, ChatGPT 3.5 Turbo is called from Python to predict the activities by varying the configuration settings, and the characteristics of the information provided in the prompt.
 
 > [!NOTE] 
-> Many of the functions used in the codes require downloading some functions and packages to run the code. Keep this in mind.
+> Many of the functions used in the codes require downloading some external functions and packages to run the code. Keep this in mind.
 
 ## How to run the code?
+
+Before processing sensor data, you should consider that the prokect is missing several folders where data should be stored. So, for the scripts to work, three folders named *"uploaded_data"*, *"unpacked_data"* and *"csvs"* should be added, each with one folder for each subject, which should be named *"subject_(subject number)"* (e.g., x *"subject_1"*). After creating these folders, move each user data, which is in a folder named after the user's UUID, into their corresponding subject number under *"uploaded_data"*. This set of files will be used for data extraction and will be used throughout the project. The following is an example of how the directory should look:
+
+*"C:\Users\John\Desktop\projects\ESS_test\uploaded_data\subject_1\6ec0bd7f-11c0-43da-975e-2a8ad9ebae0b”*
+
 Once the repository has been downloaded and the correct naming of the subjects to be analyzed, the complete code requires the following running sequence:
 * To get data collection: 
 ```
