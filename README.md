@@ -19,9 +19,12 @@ The process for preparing the IMU raw dataset is described below:
 To begin, the data recorded in the ExtraSensory app is collected and stored on its corresponding server. Once the data are obtained, the data is unzipped, processed, and saved in a folder.
 
 2. Data analysis
-The labels reported by users are graphed to visualize activities over time and identify the main activities.
+The labels users report are graphed to visualize activities over time and identify the main activities.
+
+3. Feature extraction on sensor dataset
+Sensor features were extracted
+
 
 ## Result
 
-4. 
 
