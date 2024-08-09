@@ -121,10 +121,13 @@ def get_default_list_of_sensors():
 	sensors	= [\
 	'raw_acc',\
 	'proc_gyro',\
+    'raw_magnet',\
 	'watch_acc',\
+    'watch_compass',\
 	'location',\
 	'location_quick_features',\
 	'audio_naive',\
+    'audio_properties',\
 	'discrete_measurements',\
 	'lf_measurements',\
 	];
@@ -242,7 +245,7 @@ def get_instance_labels_from_feedback_file(instance_dir):
         pass; # end if moods in feedback...
     
     lscode= get_label_source_code(feedback);
-	
+        
 	# Put the standardized fields back in the structure:
     feedback['main_activity'] 			= main_activity;
     feedback['secondary_activities']	= secondary_activities;

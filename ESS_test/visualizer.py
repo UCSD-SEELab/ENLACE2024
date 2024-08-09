@@ -9,30 +9,11 @@ import gzip  # Which is used for reading and writing gzip-compressed files
 from io import BytesIO  # Method that manipulate string and bytes data in memory
 import sklearn.linear_model
 from ess_utils import convert_extrasensory_dataset_label_to_standard_network_label
-
-
-'F4665B94-4B4A-4FE0-BA33-FB567BE2E139' #1,#5
-'50FB4388-2DD2-4246-A508-93A4D2894361' #2
-'E4712828-EF23-4B4F-AA26-5A92D0BD4239' #3,#4
-
-subject = int(input("Select subject number  to visualize (1/2/3/4/5):"))
-
-match subject:
-    case 1:
-        uuid = 'F4665B94-4B4A-4FE0-BA33-FB567BE2E139'
-        subject_num = 'subject_1'
-    case 2:
-        uuid = '50FB4388-2DD2-4246-A508-93A4D2894361'
-        subject_num = 'subject_2'
-    case 3:
-        uuid = 'E4712828-EF23-4B4F-AA26-5A92D0BD4239'
-        subject_num = 'subject_3'
-    case 4:
-        uuid = 'E4712828-EF23-4B4F-AA26-5A92D0BD4239'
-        subject_num = 'subject_4'
-    case 5:
-        uuid = 'F4665B94-4B4A-4FE0-BA33-FB567BE2E139'
-        subject_num = 'subject_5'
+from ESS_test.chatGPT import *
+import tqdm
+import matplotlib.colors as mcolors
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import re
 
 def parse_header_of_csv(csv_str):  # Takes a string csv_str containing CSV data
     # Isolate the headline columns:
@@ -73,6 +54,7 @@ def parse_body_of_csv(csv_str,n_features):  # Defines a function named parse_bod
     # Timestamp is the primary key for the records (examples):
     timestamps = full_table[:,0].astype(int)  # Extracts the first column (timestamps) and converts it to integers
     
+    
     # Read the sensor features:
     X = full_table[:,1:(n_features+1)]  # Extracts the feature columns into the matrix X
     
@@ -83,10 +65,6 @@ def parse_body_of_csv(csv_str,n_features):  # Defines a function named parse_bod
     
     return (X,Y,M,timestamps)  # Returns the feature matrix X, label matrix Y, missing label matrix M, and timestamps
 
-'''
-Read the data (precomputed sensor-features and labels) for a user.
-This function assumes the user's data file is present.
-'''
 def read_user_data(uuid,subject_num):  # Defines a function named read_user_data that takes a user ID uuid
     user_data_file = 'csvs/%s/%s.features_labels.csv.gz' % (subject_num,uuid)  # Constructs the filename for the user's data file based on the uuid
 
@@ -102,58 +80,488 @@ def read_user_data(uuid,subject_num):  # Defines a function named read_user_data
     return (X,Y,M,timestamps,feature_names,label_names)  # Returns the extracted data and metadata.
 
 # ----------------------------------------- Read data for a particular user ----------------------------------------
-(X,Y,M,timestamps,feature_names,label_names) = read_user_data(uuid,subject_num)
+#(X,Y,M,timestamps,feature_names,label_names) = read_user_data(uuid,subject_num)
 
-print("User %s has %d examples (~%d minutes of behavior)" % (uuid,len(timestamps),len(timestamps)))
-timestamps.shape
+#print("User %s has %d examples (Folders with collected data)" % (uuid,len(timestamps),))
 
-print("The primary data files have %d different sensor-features" % len(feature_names))
-X.shape
-Y.shape
-M.shape
+# Count non-zero sensor features
+#non_zero_sensors = np.sum(np.any(X != 0, axis=0))
+#print("The primary data files have %d different sensor-features, of which %d have information." % (len(feature_names), non_zero_sensors))
 
-print("The primary data files have %s context-labels" % len(label_names))
+# Count non-zero context labels
+#non_zero_labels = np.sum(np.any(Y != 0, axis=0))
+#print("The primary data files have %d context-labels, of which %d have information." % (len(label_names), non_zero_labels))
 
+def get_timestamps_with_label(Y, timestamps, label_names, target_label):
+    label_index = label_names.index(target_label)
+    relevant_timestamps = timestamps[Y[:, label_index] == 1] 
+    return relevant_timestamps
+
+def combine_timestamps(target_timestamps, mistake_timestamps):
+    combined_timestamps = []
+    mistake_index = 0
+    
+    for i in range(len(target_timestamps)):
+        combined_timestamps.append(target_timestamps[i])
+        if (i + 1) % 2 == 0 and mistake_index < len(mistake_timestamps):
+            combined_timestamps.append(mistake_timestamps[mistake_index])
+            mistake_index += 1
+    
+    return combined_timestamps
+
+def calculate_statistics(data):
+    mean = np.mean(data)
+    std_dev = np.std(data)
+    variance = np.var(data)
+    return mean, std_dev, variance
+
+def calculate_metrics(true_labels, predictions):
+    accuracy = accuracy_score(true_labels, predictions)
+    precision = precision_score(true_labels, predictions, average='binary')
+    recall = recall_score(true_labels, predictions, average='binary')
+    f1 = f1_score(true_labels, predictions, average='binary')
+    return accuracy, precision, recall, f1
+
+def load_mfcc_file(filename):
+    try:
+        with open(filename, 'r') as file:
+            lines = file.readlines()
+        
+        data = []
+        for line in lines:
+            try:
+                row = list(map(float, line.strip().rstrip(',').split(',')))
+                data.append(row)
+            except ValueError as e:
+                print(f"Error processing line: {line.strip()}\n{e}")
+        
+        data = np.array(data)
+        
+        if data.size == 0:
+            raise ValueError("No valid data found in the file.")
+        
+        return data
+    except Exception as e:
+        print(f"An error occurred while reading the file: {e}")
+        return None
+
+def reshape_mfcc_data(data):
+    if data is None or data.size == 0:
+        print("No data to reshape.")
+        return None
+
+    try:
+        num_rows = data.shape[0]
+        reshaped_data = data.reshape(num_rows, 13)
+        return reshaped_data
+    except ValueError as e:
+        print(f"Error reshaping data: {e}")
+        return None
+
+def plot_spectrogram(data, Hz=430/20):
+    if data is None or data.size == 0:
+        print("No data to plot.")
+        return
+    
+    try:
+        num_samples = data.shape[0]
+        duration = num_samples / Hz
+        
+        plt.figure(figsize=(12, 8))
+        
+        plt.imshow(data.T, aspect='auto', origin='lower', cmap='jet', norm=mcolors.Normalize(vmin=-4, vmax=10))
+        
+        plt.colorbar(label='MFCC Value')
+        plt.xlabel('Time (seconds)')
+        plt.xticks(ticks=np.linspace(0, num_samples, num=5), labels=np.round(np.linspace(0, duration, num=5), 2))
+        plt.ylabel('MFCC Channels')
+        plt.title('audio')
+        
+        plt.show()
+    except Exception as e:
+        print(f"An error occurred while plotting the spectrogram: {e}")
+
+def read_dat_file_for_plot(timestamp, dat_names_, subject_num, uuid):
+    file_path = os.path.join('unpacked_data', subject_num, uuid, str(timestamp), dat_names_)
+    data = np.loadtxt(file_path)
+    if data.size <= 20 or np.isnan(data).all():
+        print(f"No valid data in file: {file_path}")
+        return None, None, None, None, None, None, None, None, None
+    x = data[:, 1]
+    y = data[:, 2]
+    z = data[:, 3]
+    
+    Hz_full = 40
+    timestamps_full = np.arange(len(x)) / Hz_full
+
+    total_seconds = len(x) / Hz_full
+    print(f"Total second available in the file {dat_names_}: {total_seconds:.2f}s")
+
+    Hz_options = ['40 Hz', '20 Hz', '10 Hz', '5 Hz', '2 Hz']
+
+    Hz_int = [40, 20, 10, 5, 2]
+
+    time_options = ['20s', '15 s', '10 s', '5 s', 'all']
+
+    time_int = [20, 15, 10, 5]
+
+    while True:
+        print("List of Frequencies:")
+        for i, Hz_val in enumerate(Hz_options, start=1):
+            print(f"{i}. {Hz_val}")
+
+        Hz_selected = input(f"Select a Frequencie (1-{len(Hz_options)}): ")
+
+        if Hz_selected.isdigit() and 1 <= int(Hz_selected) <= len(Hz_options):
+            Hz = Hz_int[int(Hz_selected) - 1]
+            print(f"Selected Frecuencie: {Hz} Hz")
+            break
+        print("Invalid frequency. Please try again.")
+    
+    while True:
+        print(f"Total second available in the file {dat_names_}: {total_seconds:.2f}s")
+        print("List of Times:")
+        for i, time_val in enumerate(time_options, start=1):
+            print(f"{i}. {time_val}")
+
+        time_selected = input(f"Select a Time (1-{len(time_options)}): ")
+        if time_selected.isdigit() and 1 <= int(time_selected) <= len(Hz_options):
+            if int(time_selected) == len(time_options):
+                time_duration = int(total_seconds)
+            else:
+                time_duration = time_int[int(time_selected) - 1]
+            if time_duration <= total_seconds:
+                print(f"Selected Time: {time_duration} s")
+                break
+        print("Invalid time duration. Please try again.")
+
+    step = Hz_full // Hz
+    
+    x_reduced = np.mean(x[:Hz*time_duration*step].reshape(-1, step), axis=1)
+    y_reduced = np.mean(y[:Hz*time_duration*step].reshape(-1, step), axis=1)
+    z_reduced = np.mean(z[:Hz*time_duration*step].reshape(-1, step), axis=1)
+
+    Hz_reduced = Hz
+    timestamp_reduced = np.arange(len(x_reduced)) / Hz_reduced
+
+    return timestamps_full, x, y, z, timestamp_reduced, x_reduced, y_reduced, z_reduced, Hz_reduced
+
+def plot_dat_file(timestamps_list, target_label, uuid, subject_num):
+    
+    flower = 0
+    
+    for timestamp in timestamps_list:
+        
+        if flower==5:
+            break
+        
+        print('Timestamp')
+        print(timestamp)
+        
+        acc_data = read_dat_file_for_plot(timestamp, 'm_raw_acc.dat', subject_num, uuid)
+        gyro_data = read_dat_file_for_plot(timestamp, 'm_raw_gyro.dat', subject_num, uuid)  
+        magnet_data = read_dat_file_for_plot(timestamp, 'm_raw_magnet.dat', subject_num, uuid)
+        
+        if any(data is None for data in acc_data) or any(data is None for data in gyro_data) or any(data is None for data in magnet_data):
+            print(f"Skipping timestamp {timestamp} due to no valid data.")
+            continue
+        
+        mfcc_file = os.path.join('unpacked_data', subject_num, uuid, str(timestamp), 'sound.mfcc')
+        
+        mfcc_data = load_mfcc_file(mfcc_file)
+        audio_data = reshape_mfcc_data(mfcc_data)
+        
+        if audio_data is None or audio_data.size == 0:
+            print("No data to plot.")
+            audio_data = [0,0,0,0,0,0,0,0,0,0,0,0,0]
+        
+        fig, axs = plt.subplots(2, 2, figsize=(15, 10))
+        
+        axs[0, 0].plot(acc_data[0], acc_data[1], label='x')
+        axs[0, 0].plot(acc_data[0], acc_data[2], label='y')
+        axs[0, 0].plot(acc_data[0], acc_data[3], label='z')
+        axs[0, 0].set_title('Acceleration (40 Hz)')
+        axs[0, 0].set_xlabel('Time (s)')
+        axs[0, 0].set_ylabel('Acceleration')
+        axs[0, 0].legend()
+        axs[0, 0].grid(True)
+        
+        axs[0, 1].plot(acc_data[4], acc_data[5], label='x')
+        axs[0, 1].plot(acc_data[4], acc_data[6], label='y')
+        axs[0, 1].plot(acc_data[4], acc_data[7], label='z')
+        axs[0, 1].set_title(f'Acceleration ({acc_data[8]} Hz)')
+        axs[0, 1].set_xlabel('Time (s)')
+        axs[0, 1].set_ylabel('Acceleration')
+        axs[0, 1].legend()
+        axs[0, 1].grid(True)
+        
+        axs[1, 0].plot(gyro_data[0], gyro_data[1], label='x')
+        axs[1, 0].plot(gyro_data[0], gyro_data[2], label='y')
+        axs[1, 0].plot(gyro_data[0], gyro_data[3], label='z')
+        axs[1, 0].set_title('Gyroscope (40 Hz)')
+        axs[1, 0].set_xlabel('Time (s)')
+        axs[1, 0].set_ylabel('Angular Velocity')
+        axs[1, 0].legend()
+        axs[1, 0].grid(True)
+        
+        axs[1, 1].plot(gyro_data[4], gyro_data[5], label='x')
+        axs[1, 1].plot(gyro_data[4], gyro_data[6], label='y')
+        axs[1, 1].plot(gyro_data[4], gyro_data[7], label='z')
+        axs[1, 1].set_title(f'Gyroscope ({gyro_data[8]} Hz)')
+        axs[1, 1].set_xlabel('Time (s)')
+        axs[1, 1].set_ylabel('Angular Velocity')
+        axs[1, 1].legend()
+        axs[1, 1].grid(True)
+        
+        plt.suptitle(f'{target_label} - Timestamp: {timestamp} - {subject_num}')
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.subplots_adjust(hspace=0.4)
+        plt.show()
+        
+        fig2, axs2 = plt.subplots(1, 2, figsize=(15, 5))
+        
+        axs2[0].plot(magnet_data[0], magnet_data[1], label='x')
+        axs2[0].plot(magnet_data[0], magnet_data[2], label='y')
+        axs2[0].plot(magnet_data[0], magnet_data[3], label='z')
+        axs2[0].set_title('Magnetometer (40 Hz)')
+        axs2[0].set_xlabel('Time (s)')
+        axs2[0].set_ylabel('Magnetic Field Strength')
+        axs2[0].legend()
+        axs2[0].grid(True)
+        
+        axs2[1].plot(magnet_data[4], magnet_data[5], label='x')
+        axs2[1].plot(magnet_data[4], magnet_data[6], label='y')
+        axs2[1].plot(magnet_data[4], magnet_data[7], label='z')
+        axs2[1].set_title(f'Magnetometer ({magnet_data[8]} Hz)')
+        axs2[1].set_xlabel('Time (s)')
+        axs2[1].set_ylabel('Magnetic Field Strength')
+        axs2[1].legend()
+        axs2[1].grid(True)
+        
+        plt.suptitle(f'Magnetometer Data - Timestamp: {timestamp}')
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.subplots_adjust(hspace=0.4)
+        plt.show()
+        
+        plot_spectrogram(audio_data)
+        
+        flower += 1
+    
+    return
+
+def read_dat_file_for_AI(timestamp, dat_names_, subject_num, uuid):
+    file_path = os.path.join('unpacked_data', subject_num, uuid, str(timestamp), dat_names_)
+    data = np.loadtxt(file_path)
+    if data.size <= 40 or np.isnan(data).all():
+        print(f"No valid data in file: {file_path}")
+        return None, None, None, None, None, None, None, None, None
+    x = data[:, 1]
+    y = data[:, 2]
+    z = data[:, 3]
+    
+    Hz_full = 40
+    timestamps_full = np.arange(len(x)) / Hz_full
+
+    total_seconds = len(x) / Hz_full
+    
+    Hz = 10
+    
+    time_duration = 10
+    
+    print(f"Total second available in the file {dat_names_}: {total_seconds:.2f}s")
+    
+    step = max(1, Hz_full // Hz)
+    
+    num_samples = len(x)
+    remainder = num_samples % step
+    if remainder > 0:
+        x = x[:-remainder]
+        y = y[:-remainder]
+        z = z[:-remainder]
+    
+    try:
+        x_reduced = np.mean(x[:Hz*time_duration*step].reshape(-1, step), axis=1)
+        y_reduced = np.mean(y[:Hz*time_duration*step].reshape(-1, step), axis=1)
+        z_reduced = np.mean(z[:Hz*time_duration*step].reshape(-1, step), axis=1)
+    except ValueError as e:
+        print(f"Error reshaping data: {e}")
+        return timestamps_full, x, y, z, None, None, None, None, Hz_full, None, None, None, None, None, None, None, None, None
+
+    Hz_reduced = Hz
+    timestamp_reduced = np.arange(len(x_reduced)) / Hz_reduced
+    
+    x_mean, x_std, x_var = calculate_statistics(x)
+    y_mean, y_std, y_var = calculate_statistics(y)
+    z_mean, z_std, z_var = calculate_statistics(z)
+
+    return timestamps_full, x, y, z, timestamp_reduced, x_reduced, y_reduced, z_reduced, Hz_reduced, x_mean, x_std, x_var, y_mean, y_std, y_var, z_mean, z_std, z_var
+
+def extract_action_from_response(response):
+    match = re.search(r'\{(.*?)\}', response)
+    if match:
+        action = match.group(1)
+        return action
+    else:
+        return None
+
+def AI_prediction(timestamps_list, num_predictions, target_label, mistake_label, uuid, subject_num, relevant_timestamps):
+    true_labels_all = []
+    predictions_all = []
+    all_name_true = []
+    all_name_pred = []
+    flower = 0
+    for timestamp in timestamps_list:
+        if flower==1:
+            break
+        print('Timestamp')
+        print(timestamp)
+        
+        acc_data = read_dat_file_for_AI(timestamp, 'm_raw_acc.dat', subject_num, uuid)
+        gyro_data = read_dat_file_for_AI(timestamp, 'm_raw_gyro.dat', subject_num, uuid)  
+        magnet_data = read_dat_file_for_AI(timestamp, 'm_raw_magnet.dat', subject_num, uuid)
+        
+        if any(data is None for data in acc_data) or any(data is None for data in gyro_data) or any(data is None for data in magnet_data):
+            print(f"Skipping timestamp {timestamp} due to no valid data.")
+            continue
+        
+        mfcc_file = os.path.join('unpacked_data', subject_num, uuid, str(timestamp), 'sound.mfcc')
+        
+        mfcc_data = load_mfcc_file(mfcc_file)
+        audio_data = reshape_mfcc_data(mfcc_data)
+        mfcc_statistics = []
+        
+        if audio_data is None or audio_data.size == 0:
+            print("No data to plot.")
+            audio_data = [0,0,0,0,0,0,0,0,0,0,0,0,0]
+            for i in range(audio_data.shape[1]):
+                mfcc_mean, mfcc_std, mfcc_var = 0, 0, 0
+                mfcc_statistics.extend([mfcc_mean, mfcc_std, mfcc_var])
+        else:
+            for i in range(audio_data.shape[1]):
+                mfcc_mean, mfcc_std, mfcc_var = calculate_statistics(audio_data[:, i])
+                mfcc_statistics.extend([mfcc_mean, mfcc_std, mfcc_var])
+        
+        statistics_list = [
+            acc_data[9], acc_data[10], acc_data[11], acc_data[12], acc_data[13], acc_data[14], acc_data[15], acc_data[16], acc_data[17],
+            gyro_data[9], gyro_data[10], gyro_data[11], gyro_data[12], gyro_data[13], gyro_data[14], gyro_data[15], gyro_data[16], gyro_data[17],
+            magnet_data[9], magnet_data[10], magnet_data[11], magnet_data[12], magnet_data[13], magnet_data[14], magnet_data[15], magnet_data[16], magnet_data[17]
+        ] + mfcc_statistics
+        
+        Hz_audio = 10
+        seconds_audio = 5
+        
+        num_samples = int(seconds_audio * Hz_audio)
+        step = int(20 / Hz_audio)
+        
+        if audio_data is None or audio_data.size == 0:
+            audio_data = [0,0,0,0,0,0,0,0,0,0,0,0,0]
+        else:
+            audio_data = np.array([
+                np.mean(audio_data[:num_samples * step, i].reshape(-1, step), axis=1)
+                for i in range(audio_data.shape[1])
+                ]).T
+        
+        if 'LYING_DOWN' in target_label:
+            target_label = 'LYING DOWN'
+            print(f'----------------------------------{target_label}----------------------------------')
+        
+        prompt = generate_prompt_reduced_acc(acc_data[8], acc_data[5], acc_data[6], acc_data [7])
+        
+        print(f"Target label: {target_label}")
+        
+        with tqdm.tqdm(total=1) as pbar:
+            analysis_result = call_openai(prompt)
+            pbar.update(1)
+        
+        print(f"Analysis for timestamp {timestamp}: {analysis_result}")
+        
+        analysis_result = extract_action_from_response(analysis_result)
+        
+        print(f'Action: {analysis_result}')
+        
+        if analysis_result == None:
+            print(f'--------------------------------------------------------------------')
+            continue
+        
+        if 'WALKING' in analysis_result:
+            label_resp = 'WALKING'
+        elif 'SITTING' in analysis_result:
+            label_resp = 'SITTING'
+        elif 'LYING DOWN' in analysis_result or 'LIYING DOWN' in analysis_result:
+            label_resp = 'LYING DOWN'
+        elif 'STANDING' in analysis_result:
+            label_resp = 'STANDING'
+        else:
+            print('-------------------------------------------------------------------------------------------')
+            continue
+        
+        print(f'label_resp: {label_resp}')
+        
+        if timestamp in relevant_timestamps:
+            predicted_label = target_label in analysis_result
+            true_label = True
+            
+            predictions_all.append(int(predicted_label))
+            true_labels_all.append(int(true_label))
+            
+            all_name_true.append(target_label)
+            all_name_pred.append(label_resp)
+            
+        else:
+            predicted_label = target_label in analysis_result
+            true_label = False
+            
+            predictions_all.append(int(predicted_label))
+            true_labels_all.append(int(true_label))
+            
+            all_name_true.append(mistake_label)
+            all_name_pred.append(label_resp)
+        
+        print('y_true:')
+        print(true_labels_all)
+        print('y_pred')
+        print(predictions_all)
+        
+        accuracy, precision, recall, f1 = calculate_metrics(true_labels_all, predictions_all)
+        
+        num_predictions += 1
+        print(f'NUM predictions: {num_predictions}')
+        
+        flower += 1
+        
+        if 'LYING DOWN' in target_label:
+            target_label = 'LYING_DOWN'
+            print(f'----------------------------------{target_label}----------------------------------')
+    
+    print(f"Accuracy for label '{target_label}': {accuracy * 100:.2f}%")
+    print(f"Precision: {precision * 100:.2f}%")
+    print(f"Recall: {recall * 100:.2f}%")
+    print(f"F1-score: {f1 * 100:.2f}%")
+    
+    return true_labels_all, predictions_all, all_name_true, all_name_pred, num_predictions
 
 #//////////////////////////////////////////////////// LABELS ///////////////////////////////////////////////
 
-
-# array n_examples_per_label where each element represents the number of examples for a corresponding label
-n_examples_per_label = np.sum(Y,axis=0)  # Computes the sum of the binary label matrix Y along the columns
-labels_and_counts_verif = zip(label_names,n_examples_per_label)# Creates pairs (tuples) of label names and their corresponding counts. 
-
-
-i = 0
-
-for (label,count) in labels_and_counts_verif:
-    label_names.insert(i,convert_extrasensory_dataset_label_to_standard_network_label(label))
-    i += 1
-    label_names.pop(i)
-    pass
-
-labels_and_counts = zip(label_names, n_examples_per_label) #Creates an updated tuple
-sorted_labels_and_counts = sorted(labels_and_counts,reverse=True,key=lambda pair:pair[1])  # Sorts the pairs in descending order based on the counts.
-# reverse=True ensures the sorting is in descending order.
-# key=lambda pair: pair[1] specifies that sorting should be done based on the second element of each pair (the count).
-
-# To prettify the standardized label names.
-
 def get_label_pretty_name(label): 
     if label.endswith('_'):
-        label = label[:-1] + ')';
-        pass;
+        label = label[:-1] + ')'
+        pass
     
-    label = label.replace('__',' (').replace('_',' ');
-    label = label[0] + label[1:].lower();
-    label = label.replace('i m','I\'m');
-    return label;
-print ("How many examples does this user have for each contex-label:")
-print ("-"*20)
-for (label,count) in sorted_labels_and_counts:
-    print (" %s - %d minutes" % (get_label_pretty_name(label),count))
-    pass
+    label = label.replace('__',' (').replace('_',' ')
+    label = label[0] + label[1:].lower()
+    label = label.replace('i m','I\'m')
+    return label
+
+def calculate_total_time(Y, timestamps):
+    unique_timestamps = set()
+    for i in range(Y.shape[0]):
+        if np.any(Y[i, :]):
+            unique_timestamps.add(timestamps[i])
+    total_time = len(unique_timestamps)
+    return total_time
 
 # -------------- For mutually-exclusive context-labels (time the user recorded and labeled contex) -------------------
+
 '''
 Y: The binary label matrix, where rows represent examples and columns represent labels.
 label_names: A list of label names corresponding to the columns of Y.
@@ -161,6 +569,7 @@ labels_to_display: A list of specific labels that should be displayed in the pie
 title_str: A string representing the title of the pie chart.
 ax: The matplotlib axis object where the pie chart will be plotted.
 '''
+
 def figure__pie_chart(Y,label_names,labels_to_display,title_str,ax):
     
     portion_of_time = np.mean(Y,axis=0) # Calculates the mean of each column in Y. This gives the average value of each label across all examples.
@@ -192,21 +601,8 @@ def figure__pie_chart(Y,label_names,labels_to_display,title_str,ax):
         pass
     return
 
-fig = plt.figure(figsize=(15,5),facecolor='white')
-
-labels_to_display = ['LYING_DOWN','SITTING','STANDING','WALKING','RUNNING']
-ax1 = plt.subplot(1,2,1)
-figure__pie_chart(Y,label_names,labels_to_display,'Body state',ax1)
-
-
-labels_to_display = ['PHONE_IN_HAND','PHONE_IN_BAG','PHONE_IN_POCKET','PHONE_ON_TABLE']
-ax2 = plt.subplot(1,2,2)
-figure__pie_chart(Y,label_names,labels_to_display,'Phone position',ax2)
-
-plt.tight_layout()
-plt.show()
-
 # --------------- Label combinations that describe specific situations. ---------------
+
 def get_actual_date_labels(tick_seconds):  # Converts a list of timestamps into human-readable date and time labels, assuming the data is in the US/Pacific time zone.
     
     time_zone = pytz.timezone('US/Pacific') # Assuming the data comes from PST time zone
@@ -277,20 +673,6 @@ def figure__context_over_participation_time(timestamps, Y, label_names, label_co
     plt.show()
     return
 
-# Calling the function above
-
-print("Here is a track of when the user was engaged in different contexts.")
-print("The bottom row (gray) states when sensors were recorded (the data-collection app was not running all the time).")
-print("The context-labels annotations were self-reported by ther user (and then cleaned by the researchers).")
-
-labels_to_display = ['LYING_DOWN','RUNNING','BICYCLING','SITTING','STANDING','WALKING',
-                    'IN_A_CAR','AT_HOME','AT_WORK']
-label_colors = ['g','y','b','c','m','b','r','k','purple']
-figure__context_over_participation_time(timestamps,Y,label_names,label_colors)
-
-# See the day of week and time of day
-# figure__context_over_participation_time(timestamps,Y,label_names,labels_to_display,label_colors,use_actual_dates=True)
-
 # -------------Analyze the label matrix Y to see overall similarity/co-occurrence relations between labels ------------
 
 def jaccard_similarity_for_label_pairs(Y):
@@ -311,28 +693,14 @@ def jaccard_similarity_for_label_pairs(Y):
     J[either_label_counts == 0] = 0.
     return J
 
-J = jaccard_similarity_for_label_pairs(Y)
-
-print("Label-pairs with higher color value tend to occur together more.")
-
-fig = plt.figure(figsize=(10,10),facecolor='white')
-ax = plt.subplot(1,1,1)
-plt.imshow(J,interpolation='none');plt.colorbar()
-
-pretty_label_names = [get_label_pretty_name(label) for label in label_names]
-n_labels = len(label_names)
-ax.set_xticks(range(n_labels))
-ax.set_xticklabels(pretty_label_names,rotation=45,ha='right',fontsize=7)
-ax.set_yticks(range(n_labels))
-ax.set_yticklabels(pretty_label_names,fontsize=7)
-plt.show()
-
 #//////////////////////////////////////////////////// SENSOR FEATURES  ///////////////////////////////////////////////
+
 '''
 Acc (phone-accelerometer), Gyro (phone-gyroscope), WAcc (watch-accelerometer), Loc (location), Aud (audio), and PS (phone-state).
 Plus, the other sensors provided here that were not analyzed in the original paper: Magnet (phone-magnetometer), Compass (watch-compass), 
 AP (audio properties, about the overall power of the audio), and LF (various low-frequency sensors).
 '''
+
 def get_sensor_names_from_features(feature_names):
     feat_sensor_names = np.array([None for feat in feature_names])
     for (fi,feat) in enumerate(feature_names):
@@ -376,13 +744,8 @@ def get_sensor_names_from_features(feature_names):
 
     return feat_sensor_names
 
-feat_sensor_names = get_sensor_names_from_features(feature_names)
-
-for (fi,feature) in enumerate(feature_names):
-    print("%3d) %s %s" % (fi,feat_sensor_names[fi].ljust(10),feature))
-    pass
-
 # ------------------------------------- Examine the values of these features ----------------------------------------
+
 def figure__feature_track_and_hist(X,feature_names,timestamps,feature_inds):
     seconds_in_day = (60*60*24)
     days_since_participation = (timestamps - timestamps[0]) / float(seconds_in_day)
@@ -410,10 +773,8 @@ def figure__feature_track_and_hist(X,feature_names,timestamps,feature_inds):
     
     return
 
-feature_inds = [0,102,133,148,157,158]
-figure__feature_track_and_hist(X,feature_names,timestamps,feature_inds)
-
 # ///////////////////////////// Relation between sensor-features and context-label ///////////////////////////////////
+
 def figure__feature_scatter_for_labels(X,Y,feature_names,label_names,feature1,feature2,label2color_map):
     feat_ind1 = feature_names.index(feature1)
     feat_ind2 = feature_names.index(feature2)
@@ -453,22 +814,13 @@ def figure__feature_scatter_for_labels(X,Y,feature_names,label_names,feature1,fe
     
     return
 
-feature1 = 'proc_gyro:magnitude_stats:time_entropy';#raw_acc:magnitude_autocorrelation:period';
-feature2 = 'raw_acc:3d:mean_y'
-label2color_map = {'PHONE_IN_HAND':'b','PHONE_ON_TABLE':'g'}
-figure__feature_scatter_for_labels(X,Y,feature_names,label_names,feature1,feature2,label2color_map)
-
-feature1 = 'watch_acceleration:magnitude_spectrum:log_energy_band1'
-feature2 = 'watch_acceleration:3d:mean_z'
-label2color_map = {'WALKING':'b','WATCHING_TV':'g'}
-figure__feature_scatter_for_labels(X,Y,feature_names,label_names,feature1,feature2,label2color_map)
-
 #/////////// The task of context recognition: predicting the context-labels based on the sensor-features //////////////
 '''
 We'll use linear models, specifically a logistic-regression classifier, to predict a single binary label.
 We can choose which sensors to use.
 '''
 # ------------------------------------ Training the model -------------------------------------
+
 def project_features_to_selected_sensors(X,feat_sensor_names,sensors_to_use):
     use_feature = np.zeros(len(feat_sensor_names),dtype=bool)
     for sensor in sensors_to_use:
@@ -539,12 +891,9 @@ def train_model(X_train,Y_train,M_train,feat_sensor_names,label_names,sensors_to
     
     return model
 
-sensors_to_use = ['Acc','WAcc']
-target_label = 'WALKING'
-model = train_model(X,Y,M,feat_sensor_names,label_names,sensors_to_use,target_label)
-
 # --------------------------------------------------- Testing -----------------------------------------------------
-def test_model(X_test,Y_test,M_test,timestamps,feat_sensor_names,label_names,model):
+
+def test_model(X_test,Y_test,M_test,timestamps,feat_sensor_names,label_names,model, target_label):
     # Project the feature matrix to the features from the sensors that the classifier is based on:
     X_test = project_features_to_selected_sensors(X_test,feat_sensor_names,model['sensors_to_use'])
     print("== Projected the features to %d features from the sensors: %s" % (X_test.shape[1],', '.join(model['sensors_to_use'])))
@@ -621,13 +970,13 @@ def test_model(X_test,Y_test,M_test,timestamps,feat_sensor_names,label_names,mod
     plt.xlabel('days of participation',fontsize=14)
     ax.legend(loc='best')
     plt.title('%s\nGround truth vs. predicted' % get_label_pretty_name(model['target_label']))
+    plt.show()
     
     return
 
-test_model(X,Y,M,timestamps,feat_sensor_names,label_names,model)
-
 # ------------------------------------- The same model on data of another user -------------------------------------
-'''def validate_column_names_are_consistent(old_column_names,new_column_names):
+
+def validate_column_names_are_consistent(old_column_names,new_column_names):
     if len(old_column_names) != len(new_column_names):
         raise ValueError("!!! Inconsistent number of columns.")
         
@@ -636,12 +985,3 @@ test_model(X,Y,M,timestamps,feat_sensor_names,label_names,model)
             raise ValueError("!!! Inconsistent column %d) %s != %s" % (ci,old_column_names[ci],new_column_names[ci]))
         pass
     return
-
-uuid = '50FB4388-2DD2-4246-A508-93A4D2894361'
-(X2,Y2,M2,timestamps2,feature_names2,label_names2) = read_user_data(uuid)
-
-# All the user data files should have the exact same columns. We can validate it:
-validate_column_names_are_consistent(feature_names,feature_names2)
-validate_column_names_are_consistent(label_names,label_names2)
-
-test_model(X2,Y2,M2,timestamps2,feat_sensor_names,label_names,model)'''
